@@ -7,12 +7,14 @@
   <script src="/socket.io/socket.io.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-    body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 10px; }
-    .card-btn { background: #1e293b; border: 1px solid #38bdf8; color: white; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 10px; font-weight: bold; }
-    .hand { display: flex; overflow-x: auto; width: 100%; gap: 5px; padding: 10px 0; }
-    .playing-card { min-width: 55px; height: 80px; background: white; color: black; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+    body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 15px; }
+    .card-btn { background: #1e293b; border: 1px solid #38bdf8; color: white; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 10px; font-weight: bold; font-size: 16px; }
+    .hand { display: flex; overflow-x: auto; width: 100%; gap: 8px; padding: 10px 0; justify-content: center; }
+    .playing-card { min-width: 65px; height: 95px; background: white; color: black; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; }
     .red { color: #dc2626; }
-    .timer-bar { width: 100%; height: 6px; background: #22c55e; border-radius: 3px; transition: width 1s linear; }
+    .suit-name { font-size: 11px; margin-top: 2px; text-transform: uppercase; }
+    .status-box { background: #1e293b; border-radius: 10px; padding: 15px; width: 100%; text-align: center; margin-bottom: 15px; }
+    .bid-controls { display: flex; gap: 10px; margin-top: 10px; width: 100%; }
   </style>
 </head>
 <body>
@@ -23,9 +25,9 @@
     <div id="host-controls">
       <h3>Host Setup</h3>
       <select id="gameMode" class="card-btn">
-        <option value="4FFA">4-Player FFA</option>
         <option value="3FFA">3-Player FFA (39 Cards)</option>
-        <option value="2v2">2v2 Teams Mode</option>
+        <option value="4FFA">4-Player FFA (52 Cards)</option>
+        <option value="2v2">2v2 Teams Mode (52 Cards)</option>
       </select>
       <input type="number" id="targetScore" placeholder="Target Score (e.g. 50)" class="card-btn" value="50">
       <button onclick="createRoom()" class="card-btn" style="background: #0284c7;">Create Room</button>
@@ -42,15 +44,30 @@
   </div>
 
   <div id="game-board" style="display: none; width: 100%; max-width: 450px;">
-    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-      <span>Room: <strong id="displayCode"></strong></span>
-      <span>Trump: <strong id="displayTrump">Hukum (S)</strong></span>
+    <div class="status-box">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+        <span>Room: <strong id="displayCode" style="color: #38bdf8;">---</strong></span>
+        <span>Mode: <strong id="displayMode">---</strong></span>
+      </div>
+      <div id="statusMessage" style="color: #f59e0b; font-weight: bold; font-size: 16px;">Waiting for players to join...</div>
     </div>
 
-    <div class="timer-bar" id="timer"></div>
+    <div id="biddingArea" style="display: none;" class="status-box">
+      <h3>Place Your Bid</h3>
+      <div class="bid-controls">
+        <input type="number" id="bidInput" placeholder="Bid (Min 4)" class="card-btn" style="margin: 0;" min="4" max="13">
+        <select id="trumpSuit" class="card-btn" style="margin: 0;">
+          <option value="S">Spades ♠ (Hukum)</option>
+          <option value="H">Hearts ♥ (Pan)</option>
+          <option value="D">Diamonds ♦</option>
+          <option value="C">Clubs ♣ (Chiddi)</option>
+        </select>
+      </div>
+      <button onclick="submitBid()" class="card-btn" style="background: #eab308; color: black; margin-top: 10px;">Submit Bid</button>
+    </div>
 
-    <div style="height: 180px; background: #1e293b; margin: 15px 0; border-radius: 12px; display: flex; align-items: center; justify-content: center;" id="table-cards">
-      <span style="color: #64748b;">Waiting for moves...</span>
+    <div style="height: 160px; background: #1e293b; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 15px;" id="table-cards">
+      <span style="color: #94a3b8;">Played Cards Will Appear Here</span>
     </div>
 
     <h3>Your Hand:</h3>
@@ -60,6 +77,14 @@
   <script>
     const socket = io();
     let currentRoom = "";
+    let myPlayerIndex = -1;
+
+    const suitDetails = {
+      'S': { symbol: '♠', name: 'Spades' },
+      'H': { symbol: '♥', name: 'Hearts' },
+      'D': { symbol: '♦', name: 'Diamonds' },
+      'C': { symbol: '♣', name: 'Clubs' }
+    };
 
     function createRoom() {
       const code = Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -69,35 +94,69 @@
     }
 
     function joinRoom() {
-      const code = document.getElementById('roomInput').value.toUpperCase();
-      const name = document.getElementById('nameInput').value;
+      const code = document.getElementById('roomInput').value.trim().toUpperCase();
+      const name = document.getElementById('nameInput').value.trim();
       if (!code) return alert("Enter room code!");
       currentRoom = code;
       socket.emit('join_room', { roomCode: code, name });
     }
 
+    function submitBid() {
+      const bid = parseInt(document.getElementById('bidInput').value);
+      const trump = document.getElementById('trumpSuit').value;
+      if (!bid || bid < 4) return alert("Minimum bid is 4!");
+      socket.emit('place_bid', { roomCode: currentRoom, bid, trump });
+      document.getElementById('biddingArea').style.display = 'none';
+      document.getElementById('statusMessage').innerText = `Bid placed: ${bid} (${suitDetails[trump].name})`;
+    }
+
     socket.on('room_created', (room) => {
       currentRoom = room.code;
+      myPlayerIndex = 0;
+      setupGameBoard(room);
+    });
+
+    socket.on('player_joined', ({ players, room }) => {
+      if (myPlayerIndex === -1) myPlayerIndex = players.length - 1;
+      setupGameBoard(room);
+      const needed = (room.mode === '3FFA' ? 3 : 4) - players.length;
+      if (needed > 0) {
+        document.getElementById('statusMessage').innerText = `Waiting for ${needed} more player(s)...`;
+      }
+    });
+
+    function setupGameBoard(room) {
       document.getElementById('lobby').style.display = 'none';
       document.getElementById('game-board').style.display = 'block';
       document.getElementById('displayCode').innerText = room.code;
-    });
+      document.getElementById('displayMode').innerText = room.mode;
+    }
 
-    socket.on('player_joined', ({ room }) => {
-      document.getElementById('lobby').style.display = 'none';
-      document.getElementById('game-board').style.display = 'block';
-      document.getElementById('displayCode').innerText = room.code;
-    });
-
-    socket.on('round_started', ({ hands }) => {
+    socket.on('round_started', ({ hands, state }) => {
+      document.getElementById('statusMessage').innerText = "Game Started! Place your bid.";
+      document.getElementById('biddingArea').style.display = 'block';
+      
       const handDiv = document.getElementById('myHand');
       handDiv.innerHTML = "";
-      hands[0].forEach(card => {
+      const myCards = hands[myPlayerIndex] || [];
+      
+      myCards.forEach(card => {
         const c = document.createElement('div');
-        c.className = `playing-card ${card.suit === 'H' || card.suit === 'D' ? 'red' : ''}`;
-        c.innerText = `${card.rank}\n${card.suit}`;
+        const isRed = card.suit === 'H' || card.suit === 'D';
+        c.className = `playing-card ${isRed ? 'red' : ''}`;
+        
+        const suitInfo = suitDetails[card.suit] || { symbol: card.suit, name: '' };
+        c.innerHTML = `
+          <div style="font-size: 18px;">${card.rank} ${suitInfo.symbol}</div>
+          <div class="suit-name">${suitInfo.name}</div>
+        `;
         handDiv.appendChild(c);
       });
+    });
+
+    socket.on('bid_updated', (room) => {
+      const trumpName = room.trumpSuit ? suitDetails[room.trumpSuit].name : 'None';
+      document.getElementById('statusMessage').innerText = `Current Bid: ${room.currentBid || 'None'} | Trump: ${trumpName}`;
     });
 
     socket.on('error_msg', (msg) => alert(msg));
