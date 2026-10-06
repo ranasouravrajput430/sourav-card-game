@@ -10,11 +10,14 @@
     body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 15px; }
     .card-btn { background: #1e293b; border: 1px solid #38bdf8; color: white; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 10px; font-weight: bold; font-size: 16px; }
     .hand { display: flex; overflow-x: auto; width: 100%; gap: 8px; padding: 10px 0; justify-content: center; }
-    .playing-card { min-width: 65px; height: 95px; background: white; color: black; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; }
+    .playing-card { min-width: 62px; height: 92px; background: white; color: black; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; }
     .red { color: #dc2626; }
-    .suit-name { font-size: 11px; margin-top: 2px; text-transform: uppercase; }
+    .suit-name { font-size: 10px; margin-top: 2px; text-transform: uppercase; }
     .status-box { background: #1e293b; border-radius: 10px; padding: 15px; width: 100%; text-align: center; margin-bottom: 15px; }
     .bid-controls { display: flex; gap: 10px; margin-top: 10px; width: 100%; }
+    .timer-container { width: 100%; background: #334155; height: 8px; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+    .timer-bar { width: 100%; height: 100%; background: #ef4444; transition: width 1s linear; }
+    .btn-group { display: flex; gap: 10px; width: 100%; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -44,12 +47,18 @@
   </div>
 
   <div id="game-board" style="display: none; width: 100%; max-width: 450px;">
+    
+    <div class="timer-container" id="timerBox" style="display: none;">
+      <div class="timer-bar" id="timerBar"></div>
+    </div>
+
     <div class="status-box">
       <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
         <span>Room: <strong id="displayCode" style="color: #38bdf8;">---</strong></span>
         <span>Mode: <strong id="displayMode">---</strong></span>
       </div>
       <div id="statusMessage" style="color: #f59e0b; font-weight: bold; font-size: 16px;">Waiting for players to join...</div>
+      <div id="turnIndicator" style="margin-top: 5px; color: #38bdf8; font-weight: bold;"></div>
     </div>
 
     <div id="biddingArea" style="display: none;" class="status-box">
@@ -63,11 +72,15 @@
           <option value="C">Clubs ♣ (Chiddi)</option>
         </select>
       </div>
-      <button onclick="submitBid()" class="card-btn" style="background: #eab308; color: black; margin-top: 10px;">Submit Bid</button>
+      <div class="btn-group">
+        <button onclick="submitBid(false)" class="card-btn" style="background: #eab308; color: black; margin: 0;">Submit Bid</button>
+        <button onclick="submitBid(true)" class="card-btn" style="background: #64748b; margin: 0;">Pass (0)</button>
+      </div>
     </div>
 
     <div style="height: 160px; background: #1e293b; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 15px;" id="table-cards">
-      <span style="color: #94a3b8;">Played Cards Will Appear Here</span>
+      <span style="color: #94a3b8;" id="tableMsg">Played Cards Will Appear Here</span>
+      <div id="playedCardsContainer" style="display: flex; gap: 8px; margin-top: 8px;"></div>
     </div>
 
     <h3>Your Hand:</h3>
@@ -78,6 +91,8 @@
     const socket = io();
     let currentRoom = "";
     let myPlayerIndex = -1;
+    let timerInterval = null;
+    let timeLeft = 20;
 
     const suitDetails = {
       'S': { symbol: '♠', name: 'Spades' },
@@ -85,6 +100,27 @@
       'D': { symbol: '♦', name: 'Diamonds' },
       'C': { symbol: '♣', name: 'Clubs' }
     };
+
+    function startTimer(duration) {
+      clearInterval(timerInterval);
+      document.getElementById('timerBox').style.display = 'block';
+      timeLeft = duration;
+      const bar = document.getElementById('timerBar');
+      bar.style.width = '100%';
+      
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        const percentage = (timeLeft / duration) * 100;
+        bar.style.width = `${percentage}%`;
+        
+        if (timeLeft <= 0) {
+          clearInterval(timerInterval);
+          if (document.getElementById('biddingArea').style.display === 'block') {
+            submitBid(true); // Auto pass if timer expires
+          }
+        }
+      }, 1000);
+    }
 
     function createRoom() {
       const code = Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -101,13 +137,28 @@
       socket.emit('join_room', { roomCode: code, name });
     }
 
-    function submitBid() {
+    function submitBid(isPass) {
+      clearInterval(timerInterval);
+      document.getElementById('timerBox').style.display = 'none';
+      
+      if (isPass) {
+        socket.emit('place_bid', { roomCode: currentRoom, bid: 0, trump: 'S', isPass: true });
+        document.getElementById('biddingArea').style.display = 'none';
+        document.getElementById('statusMessage').innerText = `You Passed (0 Bid)`;
+        return;
+      }
+
       const bid = parseInt(document.getElementById('bidInput').value);
       const trump = document.getElementById('trumpSuit').value;
-      if (!bid || bid < 4) return alert("Minimum bid is 4!");
-      socket.emit('place_bid', { roomCode: currentRoom, bid, trump });
+      if (!bid || bid < 4) return alert("Minimum bid is 4! Or click Pass (0).");
+      
+      socket.emit('place_bid', { roomCode: currentRoom, bid, trump, isPass: false });
       document.getElementById('biddingArea').style.display = 'none';
       document.getElementById('statusMessage').innerText = `Bid placed: ${bid} (${suitDetails[trump].name})`;
+    }
+
+    function playCard(card) {
+      socket.emit('play_card', { roomCode: currentRoom, card });
     }
 
     socket.on('room_created', (room) => {
@@ -133,30 +184,48 @@
     }
 
     socket.on('round_started', ({ hands, state }) => {
-      document.getElementById('statusMessage').innerText = "Game Started! Place your bid.";
+      document.getElementById('statusMessage').innerText = "Bidding Phase! Place your bid or Pass.";
       document.getElementById('biddingArea').style.display = 'block';
+      startTimer(20);
+      renderHand(hands[myPlayerIndex] || []);
+    });
+
+    socket.on('game_play_phase', ({ hands, currentTurn, room }) => {
+      document.getElementById('biddingArea').style.display = 'none';
+      document.getElementById('timerBox').style.display = 'none';
+      clearInterval(timerInterval);
       
+      const trumpName = room.trumpSuit ? suitDetails[room.trumpSuit].name : 'Spades';
+      document.getElementById('statusMessage').innerText = `Highest Bid: ${room.currentBid || 4} | Trump: ${trumpName}`;
+      document.getElementById('turnIndicator').innerText = `Current Turn: Player ${currentTurn + 1}`;
+      
+      renderHand(hands[myPlayerIndex] || [], true);
+    });
+
+    function renderHand(cards, canPlay = false) {
       const handDiv = document.getElementById('myHand');
       handDiv.innerHTML = "";
-      const myCards = hands[myPlayerIndex] || [];
-      
-      myCards.forEach(card => {
+      cards.forEach(card => {
         const c = document.createElement('div');
         const isRed = card.suit === 'H' || card.suit === 'D';
         c.className = `playing-card ${isRed ? 'red' : ''}`;
-        
         const suitInfo = suitDetails[card.suit] || { symbol: card.suit, name: '' };
+        
         c.innerHTML = `
           <div style="font-size: 18px;">${card.rank} ${suitInfo.symbol}</div>
           <div class="suit-name">${suitInfo.name}</div>
         `;
+
+        if (canPlay) {
+          c.onclick = () => playCard(card);
+        }
         handDiv.appendChild(c);
       });
-    });
+    }
 
     socket.on('bid_updated', (room) => {
       const trumpName = room.trumpSuit ? suitDetails[room.trumpSuit].name : 'None';
-      document.getElementById('statusMessage').innerText = `Current Bid: ${room.currentBid || 'None'} | Trump: ${trumpName}`;
+      document.getElementById('statusMessage').innerText = `Current Bid: ${room.currentBid || 0} | Trump: ${trumpName}`;
     });
 
     socket.on('error_msg', (msg) => alert(msg));
