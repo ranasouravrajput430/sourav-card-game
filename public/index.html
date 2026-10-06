@@ -1,234 +1,145 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Plus Minus Card Game</title>
-  <script src="/socket.io/socket.io.js"></script>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-    body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 15px; }
-    .card-btn { background: #1e293b; border: 1px solid #38bdf8; color: white; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 10px; font-weight: bold; font-size: 16px; }
-    .hand { display: flex; overflow-x: auto; width: 100%; gap: 8px; padding: 10px 0; justify-content: center; }
-    .playing-card { min-width: 62px; height: 92px; background: white; color: black; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-align: center; }
-    .red { color: #dc2626; }
-    .suit-name { font-size: 10px; margin-top: 2px; text-transform: uppercase; }
-    .status-box { background: #1e293b; border-radius: 10px; padding: 15px; width: 100%; text-align: center; margin-bottom: 15px; }
-    .bid-controls { display: flex; gap: 10px; margin-top: 10px; width: 100%; }
-    .timer-container { width: 100%; background: #334155; height: 8px; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
-    .timer-bar { width: 100%; height: 100%; background: #ef4444; transition: width 1s linear; }
-    .btn-group { display: flex; gap: 10px; width: 100%; margin-top: 10px; }
-  </style>
-</head>
-<body>
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 
-  <div id="lobby" style="width: 100%; max-width: 400px; text-align: center;">
-    <h1 style="margin-bottom: 20px; color: #38bdf8;">Plus-Minus Game</h1>
-    
-    <div id="host-controls">
-      <h3>Host Setup</h3>
-      <select id="gameMode" class="card-btn">
-        <option value="3FFA">3-Player FFA (39 Cards)</option>
-        <option value="4FFA">4-Player FFA (52 Cards)</option>
-        <option value="2v2">2v2 Teams Mode (52 Cards)</option>
-      </select>
-      <input type="number" id="targetScore" placeholder="Target Score (e.g. 50)" class="card-btn" value="50">
-      <button onclick="createRoom()" class="card-btn" style="background: #0284c7;">Create Room</button>
-    </div>
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
-    <hr style="margin: 20px 0; border-color: #334155;">
+app.use(express.static('public'));
 
-    <div>
-      <h3>Join Room</h3>
-      <input type="text" id="roomInput" placeholder="Enter Room Code" class="card-btn">
-      <input type="text" id="nameInput" placeholder="Your Name" class="card-btn">
-      <button onclick="joinRoom()" class="card-btn" style="background: #16a34a;">Join Game</button>
-    </div>
-  </div>
+const rooms = {};
 
-  <div id="game-board" style="display: none; width: 100%; max-width: 450px;">
-    
-    <div class="timer-container" id="timerBox" style="display: none;">
-      <div class="timer-bar" id="timerBar"></div>
-    </div>
+function createDeck(is3FFA = false) {
+  const suits = ['S', 'H', 'D', 'C'];
+  const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  let deck = [];
+  for (let s of suits) {
+    for (let r of ranks) {
+      if (is3FFA && (r === '2' || r === '3' || r === '4')) continue;
+      deck.push({ suit: s, rank: r });
+    }
+  }
+  return deck.sort(() => Math.random() - 0.5);
+}
 
-    <div class="status-box">
-      <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-        <span>Room: <strong id="displayCode" style="color: #38bdf8;">---</strong></span>
-        <span>Mode: <strong id="displayMode">---</strong></span>
-      </div>
-      <div id="statusMessage" style="color: #f59e0b; font-weight: bold; font-size: 16px;">Waiting for players to join...</div>
-      <div id="turnIndicator" style="margin-top: 5px; color: #38bdf8; font-weight: bold;"></div>
-    </div>
-
-    <div id="biddingArea" style="display: none;" class="status-box">
-      <h3>Place Your Bid</h3>
-      <div class="bid-controls">
-        <input type="number" id="bidInput" placeholder="Bid (Min 4)" class="card-btn" style="margin: 0;" min="4" max="13">
-        <select id="trumpSuit" class="card-btn" style="margin: 0;">
-          <option value="S">Spades ♠ (Hukum)</option>
-          <option value="H">Hearts ♥ (Pan)</option>
-          <option value="D">Diamonds ♦</option>
-          <option value="C">Clubs ♣ (Chiddi)</option>
-        </select>
-      </div>
-      <div class="btn-group">
-        <button onclick="submitBid(false)" class="card-btn" style="background: #eab308; color: black; margin: 0;">Submit Bid</button>
-        <button onclick="submitBid(true)" class="card-btn" style="background: #64748b; margin: 0;">Pass (0)</button>
-      </div>
-    </div>
-
-    <div style="height: 160px; background: #1e293b; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 15px;" id="table-cards">
-      <span style="color: #94a3b8;" id="tableMsg">Played Cards Will Appear Here</span>
-      <div id="playedCardsContainer" style="display: flex; gap: 8px; margin-top: 8px;"></div>
-    </div>
-
-    <h3>Your Hand:</h3>
-    <div class="hand" id="myHand"></div>
-  </div>
-
-  <script>
-    const socket = io();
-    let currentRoom = "";
-    let myPlayerIndex = -1;
-    let timerInterval = null;
-    let timeLeft = 20;
-
-    const suitDetails = {
-      'S': { symbol: '♠', name: 'Spades' },
-      'H': { symbol: '♥', name: 'Hearts' },
-      'D': { symbol: '♦', name: 'Diamonds' },
-      'C': { symbol: '♣', name: 'Clubs' }
+io.on('connection', (socket) => {
+  socket.on('create_room', ({ roomCode, mode, targetScore }) => {
+    rooms[roomCode] = {
+      code: roomCode,
+      mode: mode || '3FFA',
+      targetScore: parseInt(targetScore) || 50,
+      players: [],
+      hands: {},
+      fullHands: {},
+      bids: {},
+      currentBid: 0,
+      highestBidder: null,
+      trumpSuit: 'S',
+      currentTurn: 0,
+      tableCards: [],
+      phase: 'LOBBY'
     };
+    socket.join(roomCode);
+    rooms[roomCode].players.push({ id: socket.id, name: 'Host' });
+    socket.emit('room_created', rooms[roomCode]);
+  });
 
-    function startTimer(duration) {
-      clearInterval(timerInterval);
-      document.getElementById('timerBox').style.display = 'block';
-      timeLeft = duration;
-      const bar = document.getElementById('timerBar');
-      bar.style.width = '100%';
+  socket.on('join_room', ({ roomCode, name }) => {
+    const room = rooms[roomCode];
+    if (!room) return socket.emit('error_msg', 'Room not found!');
+    const maxP = room.mode === '3FFA' ? 3 : 4;
+    if (room.players.length >= maxP) return socket.emit('error_msg', 'Room is full!');
+
+    socket.join(roomCode);
+    room.players.push({ id: socket.id, name: name || `Player ${room.players.length + 1}` });
+
+    io.to(roomCode).emit('player_joined', { players: room.players, room });
+
+    if (room.players.length === maxP) {
+      startRound(roomCode);
+    }
+  });
+
+  function startRound(roomCode) {
+    const room = rooms[roomCode];
+    room.phase = 'BIDDING';
+    const is3FFA = room.mode === '3FFA';
+    const deck = createDeck(is3FFA);
+    
+    const maxP = room.players.length;
+    const initialCount = 5;
+    
+    room.fullHands = {};
+    room.hands = {};
+    
+    for (let i = 0; i < maxP; i++) {
+      const pId = room.players[i].id;
+      const totalCards = is3FFA ? 13 : (52 / maxP);
+      room.fullHands[pId] = deck.slice(i * totalCards, (i + 1) * totalCards);
+      room.hands[pId] = room.fullHands[pId].slice(0, initialCount);
+    }
+
+    io.to(roomCode).emit('round_started', { hands: room.hands, room });
+  }
+
+  socket.on('place_bid', ({ roomCode, bid, trump, isPass }) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== 'BIDDING') return;
+
+    if (!isPass && bid > room.currentBid) {
+      room.currentBid = bid;
+      room.highestBidder = socket.id;
+      if (trump) room.trumpSuit = trump;
+    }
+
+    room.bids[socket.id] = isPass ? 0 : bid;
+
+    io.to(roomCode).emit('bid_updated', room);
+
+    if (Object.keys(room.bids).length === room.players.length) {
+      room.phase = 'PLAYING';
+      room.hands = room.fullHands;
       
-      timerInterval = setInterval(() => {
-        timeLeft--;
-        const percentage = (timeLeft / duration) * 100;
-        bar.style.width = `${percentage}%`;
-        
-        if (timeLeft <= 0) {
-          clearInterval(timerInterval);
-          if (document.getElementById('biddingArea').style.display === 'block') {
-            submitBid(true); // Auto pass if timer expires
-          }
-        }
-      }, 1000);
-    }
-
-    function createRoom() {
-      const code = Math.random().toString(36).substring(2, 7).toUpperCase();
-      const mode = document.getElementById('gameMode').value;
-      const target = document.getElementById('targetScore').value;
-      socket.emit('create_room', { roomCode: code, mode, targetScore: target });
-    }
-
-    function joinRoom() {
-      const code = document.getElementById('roomInput').value.trim().toUpperCase();
-      const name = document.getElementById('nameInput').value.trim();
-      if (!code) return alert("Enter room code!");
-      currentRoom = code;
-      socket.emit('join_room', { roomCode: code, name });
-    }
-
-    function submitBid(isPass) {
-      clearInterval(timerInterval);
-      document.getElementById('timerBox').style.display = 'none';
-      
-      if (isPass) {
-        socket.emit('place_bid', { roomCode: currentRoom, bid: 0, trump: 'S', isPass: true });
-        document.getElementById('biddingArea').style.display = 'none';
-        document.getElementById('statusMessage').innerText = `You Passed (0 Bid)`;
-        return;
+      let startIdx = 0;
+      if (room.highestBidder) {
+        startIdx = room.players.findIndex(p => p.id === room.highestBidder);
       }
+      room.currentTurn = startIdx >= 0 ? startIdx : 0;
 
-      const bid = parseInt(document.getElementById('bidInput').value);
-      const trump = document.getElementById('trumpSuit').value;
-      if (!bid || bid < 4) return alert("Minimum bid is 4! Or click Pass (0).");
-      
-      socket.emit('place_bid', { roomCode: currentRoom, bid, trump, isPass: false });
-      document.getElementById('biddingArea').style.display = 'none';
-      document.getElementById('statusMessage').innerText = `Bid placed: ${bid} (${suitDetails[trump].name})`;
-    }
-
-    function playCard(card) {
-      socket.emit('play_card', { roomCode: currentRoom, card });
-    }
-
-    socket.on('room_created', (room) => {
-      currentRoom = room.code;
-      myPlayerIndex = 0;
-      setupGameBoard(room);
-    });
-
-    socket.on('player_joined', ({ players, room }) => {
-      if (myPlayerIndex === -1) myPlayerIndex = players.length - 1;
-      setupGameBoard(room);
-      const needed = (room.mode === '3FFA' ? 3 : 4) - players.length;
-      if (needed > 0) {
-        document.getElementById('statusMessage').innerText = `Waiting for ${needed} more player(s)...`;
-      }
-    });
-
-    function setupGameBoard(room) {
-      document.getElementById('lobby').style.display = 'none';
-      document.getElementById('game-board').style.display = 'block';
-      document.getElementById('displayCode').innerText = room.code;
-      document.getElementById('displayMode').innerText = room.mode;
-    }
-
-    socket.on('round_started', ({ hands, state }) => {
-      document.getElementById('statusMessage').innerText = "Bidding Phase! Place your bid or Pass.";
-      document.getElementById('biddingArea').style.display = 'block';
-      startTimer(20);
-      renderHand(hands[myPlayerIndex] || []);
-    });
-
-    socket.on('game_play_phase', ({ hands, currentTurn, room }) => {
-      document.getElementById('biddingArea').style.display = 'none';
-      document.getElementById('timerBox').style.display = 'none';
-      clearInterval(timerInterval);
-      
-      const trumpName = room.trumpSuit ? suitDetails[room.trumpSuit].name : 'Spades';
-      document.getElementById('statusMessage').innerText = `Highest Bid: ${room.currentBid || 4} | Trump: ${trumpName}`;
-      document.getElementById('turnIndicator').innerText = `Current Turn: Player ${currentTurn + 1}`;
-      
-      renderHand(hands[myPlayerIndex] || [], true);
-    });
-
-    function renderHand(cards, canPlay = false) {
-      const handDiv = document.getElementById('myHand');
-      handDiv.innerHTML = "";
-      cards.forEach(card => {
-        const c = document.createElement('div');
-        const isRed = card.suit === 'H' || card.suit === 'D';
-        c.className = `playing-card ${isRed ? 'red' : ''}`;
-        const suitInfo = suitDetails[card.suit] || { symbol: card.suit, name: '' };
-        
-        c.innerHTML = `
-          <div style="font-size: 18px;">${card.rank} ${suitInfo.symbol}</div>
-          <div class="suit-name">${suitInfo.name}</div>
-        `;
-
-        if (canPlay) {
-          c.onclick = () => playCard(card);
-        }
-        handDiv.appendChild(c);
+      io.to(roomCode).emit('game_play_phase', {
+        hands: room.hands,
+        currentTurn: room.currentTurn,
+        highestBidderName: room.players[room.currentTurn].name,
+        room
       });
     }
+  });
 
-    socket.on('bid_updated', (room) => {
-      const trumpName = room.trumpSuit ? suitDetails[room.trumpSuit].name : 'None';
-      document.getElementById('statusMessage').innerText = `Current Bid: ${room.currentBid || 0} | Trump: ${trumpName}`;
+  socket.on('play_card', ({ roomCode, card }) => {
+    const room = rooms[roomCode];
+    if (!room || room.phase !== 'PLAYING') return;
+
+    const playerIdx = room.players.findIndex(p => p.id === socket.id);
+    if (playerIdx !== room.currentTurn) {
+      return socket.emit('error_msg', "It's not your turn!");
+    }
+
+    room.tableCards.push({ player: room.players[playerIdx].name, card });
+    
+    const pHand = room.hands[socket.id];
+    room.hands[socket.id] = pHand.filter(c => !(c.suit === card.suit && c.rank === card.rank));
+
+    room.currentTurn = (room.currentTurn + 1) % room.players.length;
+
+    io.to(roomCode).emit('card_played', {
+      tableCards: room.tableCards,
+      currentTurn: room.currentTurn,
+      currentPlayerName: room.players[room.currentTurn].name,
+      hands: room.hands
     });
+  });
+});
 
-    socket.on('error_msg', (msg) => alert(msg));
-  </script>
-</body>
-</html>
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
