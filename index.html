@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Plus Minus Card Game</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+    body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 10px; }
+    .card-btn { background: #1e293b; border: 1px solid #38bdf8; color: white; padding: 12px; border-radius: 8px; width: 100%; margin-bottom: 10px; font-weight: bold; }
+    .hand { display: flex; overflow-x: auto; width: 100%; gap: 5px; padding: 10px 0; }
+    .playing-card { min-width: 55px; height: 80px; background: white; color: black; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+    .red { color: #dc2626; }
+    .timer-bar { width: 100%; height: 6px; background: #22c55e; border-radius: 3px; transition: width 1s linear; }
+  </style>
+</head>
+<body>
+
+  <div id="lobby" style="width: 100%; max-width: 400px; text-align: center;">
+    <h1 style="margin-bottom: 20px; color: #38bdf8;">Plus-Minus Game</h1>
+    
+    <div id="host-controls">
+      <h3>Host Setup</h3>
+      <select id="gameMode" class="card-btn">
+        <option value="4FFA">4-Player FFA</option>
+        <option value="3FFA">3-Player FFA (39 Cards)</option>
+        <option value="2v2">2v2 Teams Mode</option>
+      </select>
+      <input type="number" id="targetScore" placeholder="Target Score (e.g. 50)" class="card-btn" value="50">
+      <button onclick="createRoom()" class="card-btn" style="background: #0284c7;">Create Room</button>
+    </div>
+
+    <hr style="margin: 20px 0; border-color: #334155;">
+
+    <div>
+      <h3>Join Room</h3>
+      <input type="text" id="roomInput" placeholder="Enter Room Code" class="card-btn">
+      <input type="text" id="nameInput" placeholder="Your Name" class="card-btn">
+      <button onclick="joinRoom()" class="card-btn" style="background: #16a34a;">Join Game</button>
+    </div>
+  </div>
+
+  <div id="game-board" style="display: none; width: 100%; max-width: 450px;">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+      <span>Room: <strong id="displayCode"></strong></span>
+      <span>Trump: <strong id="displayTrump">Hukum (S)</strong></span>
+    </div>
+
+    <div class="timer-bar" id="timer"></div>
+
+    <div style="height: 180px; background: #1e293b; margin: 15px 0; border-radius: 12px; display: flex; align-items: center; justify-content: center;" id="table-cards">
+      <span style="color: #64748b;">Waiting for moves...</span>
+    </div>
+
+    <h3>Your Hand:</h3>
+    <div class="hand" id="myHand"></div>
+  </div>
+
+  <script>
+    const socket = io();
+    let currentRoom = "";
+
+    function createRoom() {
+      const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+      const mode = document.getElementById('gameMode').value;
+      const target = document.getElementById('targetScore').value;
+      socket.emit('create_room', { roomCode: code, mode, targetScore: target });
+    }
+
+    function joinRoom() {
+      const code = document.getElementById('roomInput').value.toUpperCase();
+      const name = document.getElementById('nameInput').value;
+      if (!code) return alert("Enter room code!");
+      currentRoom = code;
+      socket.emit('join_room', { roomCode: code, name });
+    }
+
+    socket.on('room_created', (room) => {
+      currentRoom = room.code;
+      document.getElementById('lobby').style.display = 'none';
+      document.getElementById('game-board').style.display = 'block';
+      document.getElementById('displayCode').innerText = room.code;
+    });
+
+    socket.on('player_joined', ({ room }) => {
+      document.getElementById('lobby').style.display = 'none';
+      document.getElementById('game-board').style.display = 'block';
+      document.getElementById('displayCode').innerText = room.code;
+    });
+
+    socket.on('round_started', ({ hands }) => {
+      // Render mobile cards hand
+      const handDiv = document.getElementById('myHand');
+      handDiv.innerHTML = "";
+      hands[0].forEach(card => {
+        const c = document.createElement('div');
+        c.className = `playing-card ${card.suit === 'H' || card.suit === 'D' ? 'red' : ''}`;
+        c.innerText = `${card.rank}\n${card.suit}`;
+        handDiv.appendChild(c);
+      });
+    });
+
+    socket.on('error_msg', (msg) => alert(msg));
+  </script>
+</body>
+</html>
